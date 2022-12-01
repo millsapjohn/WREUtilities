@@ -31,3 +31,6 @@ JOINASC.py
 MASSMOVER.py
     Moves all files in a directory to a new directory. Doesn't work right now because I haven't done anything with
     it lol.
+
+XMRG_EXTRACT.py
+    Calls the "gridloadXMRG" exe to convert all files in the directory to separate DSS files
