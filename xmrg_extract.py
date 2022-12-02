@@ -30,9 +30,17 @@ if len(files) == 0:
 if sys.argv[1] == '-e':
     for i in files:
         subprocess.run([r'C:\Program Files (x86)\HEC\HEC-GridUtil\2.0\grid\gridloadXMRG.exe', f'xmrg={i}', f'dss={i}.dss', 'grid=SHG', 'site=WGRFC', 'fpart=PRECIP'])
+    try:
+        os.remove('hraptab.dss')
+    except FileNotFoundError:
+        print('no hraptab found')
 elif sys.argv[1] == '-c':
     for i in files:
         subprocess.run([r'C:\Program Files (x86)\HEC\HEC-GridUtil\2.0\grid\gridloadXMRG.exe', f'xmrg={i}', f'dss={sys.argv[2]}.dss', 'grid=SHG', 'site=WGRFC', 'fpart=PRECIP'])
+    try:
+        os.remove('hraptab.dss')
+    except FileNotFoundError:
+        print('no hraptab found')
 elif sys.argv[1] == '-h':
     print('xmrg_extract.py Help Menu')
     print('Arguments')
