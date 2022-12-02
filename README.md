@@ -16,7 +16,7 @@ CONVERTNEGATIVE.py<br/>
     Removes negative values from an .asc raster (converts them to zero).
 
 DSSTOASC.py<br/>
-    Converts all .dss files in a directory to .asc. Requires the "dsstoasc.exe" executable from the US Army Corps
+    Converts all .dss files in a directory to .asc. Requires the "dss2ascGrid.exe" executable from the US Army Corps
     of Engineers (USACE) Hydraulic Engineering Center (HEC). This executable is distributed as part of the HEC-RAS
     download package. This now supports the two filename formats I've come across.
 
@@ -28,6 +28,8 @@ MASSMOVER.py<br/>
     it lol.
 
 XMRG_EXTRACT.py<br/>
+    Requires the "gridloadXMRG.exe" executable from the US Army Corps of Engineers (USACE) Hydraulic Engineering
+    Center (HEC). This executable is distributed as part of the HEC-RAS download package.<br/>
     Extracts files in a directory from XMRG format to .dss format. Commandline arguments to specify method:<br/>
     -e flag extracts each file to a separate .dss file.<br/>
     -c flag extracts all files in directory to a combined .dss record.<br/>
