@@ -18,12 +18,7 @@ CONVERTNEGATIVE.py<br/>
 DSSTOASC.py<br/>
     Converts all .dss files in a directory to .asc. Requires the "dsstoasc.exe" executable from the US Army Corps
     of Engineers (USACE) Hydraulic Engineering Center (HEC). This executable is distributed as part of the HEC-RAS
-    download package.
-
-DSSTOASC_BMOSAIC.py<br/>
-    Similar to the above, but because the Weather Center publishes its .dss files in some different name formats,
-    the above (dsstoasc.py) doesn't work on all formats. At some point I'll merge these and either make them smart,
-    or create some commandline switches.
+    download package. This now supports the two filename formats I've come across.
 
 JOINASC.py<br/>
     Merges all .asc files in a directory.
