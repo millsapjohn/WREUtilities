@@ -2,8 +2,8 @@ WRE Utilities
 
 This is a collection of Python scripts I've created to automate some parts of my job as a Water Resource Engineer.
 
-As of this commit (10/28/22), all of these utilities operate on all matching files in a particular directory
-without taking any arguments.
+As of this commit (12/1/2022), all of these utilities operate on all matching files in a particular directory.
+All utilities other than xmrg_extract.py do not take any arguments.
 
 ANINT.py<br/>
     This script doesn't work (or do anything, really) at this time. Eventually it will be a script to perform an
