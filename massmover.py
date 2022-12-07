@@ -16,3 +16,6 @@ for f in files:
     src = from_path + "\\" + f
     dst = to_path + "\\" + f 
     os.popen(f"copy {src} {dst}")
+
+for f in files:
+    os.remove(f)
