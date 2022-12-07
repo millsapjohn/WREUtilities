@@ -19,9 +19,9 @@ if len(files) == 0:
 
 for f in files:
     # create a new subdirectory for each ZIP file
-    new_dir = f.replace('.zip', '')
-    new_dir = os.mkdir('{path}{new_dir}')
+    file_dir = f.replace('.zip', '')
+    new_dir = os.mkdir(os.path.join(path, file_dir))
     # extract all files in ZIP to new subdirectory
-    with ZipFile(r'{path}{f}', 'r') as zObject:
-        zObject.extractall(path='{new_dir}')
+    with ZipFile(f'{f}', 'r') as zObject:
+        zObject.extractall(new_dir)
     zObject.close()

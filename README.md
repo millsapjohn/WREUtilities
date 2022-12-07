@@ -27,6 +27,9 @@ MASSMOVER.py<br/>
     Moves all files in a directory to a new directory. Doesn't work right now because I haven't done anything with
     it lol.
 
+UNZIP.py<br/>
+    Unzips all zip files in a directory.<br/>
+
 XMRG_EXTRACT.py<br/>
     Requires the "gridloadXMRG.exe" executable from the US Army Corps of Engineers (USACE) Hydraulic Engineering
     Center (HEC). This executable is distributed as part of the HEC-RAS download package.<br/>
