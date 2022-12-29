@@ -6,8 +6,9 @@ As of this commit (12/1/2022), all of these utilities operate on all matching fi
 All utilities other than xmrg_extract.py do not take any arguments.
 
 ANINT.py<br/>
-    This script doesn't work (or do anything, really) at this time. Eventually it will be a script to perform an
-    anisotropic interpolation on raw bathymetric data. More details when it gets going.
+    Performs anisotropic inverse-distance weighted interpolation from irregular points to a generated grid. This
+    algorithm was proposed by Tim D. Osting as a method of generating surfaces from bathymetric data. The script
+    is set up as a QGIS processing script at this time, and as of this commit (28-12-2022) doesn't work yet.
 
 CONVERTMM.py<br/>
     Simple script to convert .asc files from mm (millimeters) to in (inches).
@@ -28,7 +29,10 @@ MASSMOVER.py<br/>
     it lol.
 
 UNZIP.py<br/>
-    Unzips all zip files in a directory.<br/>
+    Unzips all zip files in a directory.
+
+XMRG2TIF.py<br/>
+    Working on a python-native script for extracting XMRG files. Still in the beginning phase of this project.
 
 XMRG_EXTRACT.py<br/>
     Requires the "gridloadXMRG.exe" executable from the US Army Corps of Engineers (USACE) Hydraulic Engineering
