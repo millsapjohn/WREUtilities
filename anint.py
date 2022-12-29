@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 """
 ***************************************************************************
 *                                                                         *
@@ -19,23 +17,12 @@ from qgis.core import (QgsProcessing,
                        QgsProcessingParameterFeatureSource,
                        QgsProcessingParameterNumber,
                        QgsProcessingParameterEnum,
+                       QgsProject,
                        QgsProcessingParameterFeatureSink)
 from qgis import processing
 
 
-class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
-    """
-    This is an example algorithm that takes a vector layer and
-    creates a new identical one.
-
-    It is meant to be used as an example of how to create your own
-    algorithms and explain methods and variables used to do it. An
-    algorithm like this will be available in all elements, and there
-    is not need for additional work.
-
-    All Processing algorithms should extend the QgsProcessingAlgorithm
-    class.
-    """
+class anint(QgsProcessingAlgorithm):
 
     # Constants used to refer to parameters and outputs. They will be
     # used when calling the algorithm from another algorithm, or when
@@ -46,58 +33,33 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
     INPUT_MASK = 'INPUT_MASK'
     INPUT_P = 'INPUT_P'
     INPUT_GRID_SPACE = 'INPUT_GRID_SPACE'
-    INPUT_GRID_ORIENT = 'INPUT_GRID_ORIENT'
     OUTPUT = 'OUTPUT'
 
     def tr(self, string):
-        """
-        Returns a translatable string with the self.tr() function.
-        """
+        # returns a translatable string for use in languages other than English
         return QCoreApplication.translate('Processing', string)
 
     def createInstance(self):
-        return ExampleProcessingAlgorithm()
+        return anint()
 
     def name(self):
-        """
-        Returns the algorithm name, used for identifying the algorithm. This
-        string should be fixed for the algorithm, and must not be localised.
-        The name should be unique within each provider. Names should contain
-        lowercase alphanumeric characters only and no spaces or other
-        formatting characters.
-        """
+        # returns algorithm name for internal tracking
         return 'anint'
 
     def displayName(self):
-        """
-        Returns the translated algorithm name, which should be used for any
-        user-visible display of the algorithm name.
-        """
+        # returns algorithm name for display
         return self.tr('Anisotropic IDW Interpolation')
 
     def group(self):
-        """
-        Returns the name of the group this algorithm belongs to. This string
-        should be localised.
-        """
+        # returns name of group algorithm belongs to for display
         return self.tr('Millsap Scripts')
 
     def groupId(self):
-        """
-        Returns the unique ID of the group this algorithm belongs to. This
-        string should be fixed for the algorithm, and must not be localised.
-        The group id should be unique within each provider. Group id should
-        contain lowercase alphanumeric characters only and no spaces or other
-        formatting characters.
-        """
+        # returns name of group algorithm belongs to for internal tracking
         return 'millsapscripts'
 
     def shortHelpString(self):
-        """
-        Returns a localised short helper string for the algorithm. This string
-        should provide a basic description about what the algorithm does and the
-        parameters and outputs associated with it..
-        """
+        # returns short string describing algorithm
         return self.tr("Anisotropic IDW Interpolation for Bathymetric Data")
 
     def initAlgorithm(self, config=None):
@@ -135,15 +97,6 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
             )
         )
         self.addParameter(
-            QgsProcessingParameterEnum(
-                self.INPUT_GRID_ORIENT,
-                self.tr('Grid Orientation'),
-                options=self.GridOpts,
-                defaultValue=0,
-                optional=False
-            )
-        )
-        self.addParameter(
             QgsProcessingParameterNumber(
                 self.INPUT_P,
                 self.tr('Distance Parameter P'),
@@ -165,25 +118,65 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
         )
 
     def processAlgorithm(self, parameters, context, feedback):
-        """
-        Here is where the processing itself takes place.
-        """
 
+        # create temp layers of bathymetry, centerline, and mask
+        bathy_lyr = self.parameterAsVectorLayer(parameters, self.INPUT_BATHY, context)
+        cl_lyr = self.parameterAsVectorLayer(parameters, self.INPUT_CL, context)
+        mask_lyr = self.parameterAsVectorLayer(parameters, self.INPUT_MASK, context)
+
+        # calculate extents of bathymetry
+        bathy_extent = bathy_lyr.extent()
+        
+        # get CRS from the three layers
+        bathy_crs = bathy_lyr.crs()
+        cl_crs = cl_lyr.crs()
+        mask_crs = mask_lyr.crs()
+
+        # if CRS's don't match, end process
+        if bathy_crs != cl_crs:
+            raise QgsProcessingException('mismatched CRS in input layers')
+        elif bathy_crs != mask_crs:
+            raise QgsProcessingException('mismatched CRS in input layers')
+
+        # check CL layer only has one geometry
+        cl_feature_count = cl_lyr.featureCount()
+        if cl_feature_count > 1:
+            raise QgsProcessingException('multiple geometries in centerline layer')
+
+        # create grid layer based on parameters
+        grid_layer = processing.run("qgis:regularpoints", {
+            'EXTENT':bathy_extent,
+            'SPACING':parameters['INPUT_GRID_SPACE'],
+            'INSET':0,
+            'RANDOMIZE':False,
+            'IS_SPACING':True,
+            'CRS':bathy_crs,
+            'OUTPUT':'memory:'
+            }
+            ) 
+
+        # clip grid layer
+        clipped_layer = processing.run("native:clip", {
+            'INPUT':grid_layer,
+            'OVERLAY':mask_lyr,
+            'OUTPUT':'memory:'
+            })
+
+        # create list of segments in centerline
+        cl_feature = cl_lyr.getFeatures()
+        cl_geom = cl_feature.geometry()
+        segments = cl_geom.parts()
         # Retrieve the feature source and sink. The 'dest_id' variable is used
         # to uniquely identify the feature sink, and must be included in the
         # dictionary returned by the processAlgorithm function.
         source = self.parameterAsSource(
             parameters,
-            self.INPUT,
+            self.INPUT_BATHY,
             context
         )
 
-        # If source was not found, throw an exception to indicate that the algorithm
-        # encountered a fatal error. The exception text can be any string, but in this
-        # case we use the pre-built invalidSourceError method to return a standard
-        # helper text for when a source cannot be evaluated
         if source is None:
-            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT))
+            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_BATHY))
 
         (sink, dest_id) = self.parameterAsSink(
             parameters,
@@ -194,13 +187,6 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
             source.sourceCrs()
         )
 
-        # Send some information to the user
-        feedback.pushInfo('CRS is {}'.format(source.sourceCrs().authid()))
-
-        # If sink was not created, throw an exception to indicate that the algorithm
-        # encountered a fatal error. The exception text can be any string, but in this
-        # case we use the pre-built invalidSinkError method to return a standard
-        # helper text for when a sink cannot be evaluated
         if sink is None:
             raise QgsProcessingException(self.invalidSinkError(parameters, self.OUTPUT))
 
@@ -220,27 +206,5 @@ class ExampleProcessingAlgorithm(QgsProcessingAlgorithm):
             # Update the progress bar
             feedback.setProgress(int(current * total))
 
-        # To run another Processing algorithm as part of this algorithm, you can use
-        # processing.run(...). Make sure you pass the current context and feedback
-        # to processing.run to ensure that all temporary layer outputs are available
-        # to the executed algorithm, and that the executed algorithm can send feedback
-        # reports to the user (and correctly handle cancellation and progress reports!)
-        if False:
-            buffered_layer = processing.run("native:buffer", {
-                'INPUT': dest_id,
-                'DISTANCE': 1.5,
-                'SEGMENTS': 5,
-                'END_CAP_STYLE': 0,
-                'JOIN_STYLE': 0,
-                'MITER_LIMIT': 2,
-                'DISSOLVE': False,
-                'OUTPUT': 'memory:'
-            }, context=context, feedback=feedback)['OUTPUT']
-
-        # Return the results of the algorithm. In this case our only result is
-        # the feature sink which contains the processed features, but some
-        # algorithms may return multiple feature sinks, calculated numeric
-        # statistics, etc. These should all be included in the returned
-        # dictionary, with keys matching the feature corresponding parameter
-        # or output names.
+        # return results
         return {self.OUTPUT: dest_id}
