@@ -144,67 +144,42 @@ class anint(QgsProcessingAlgorithm):
             raise QgsProcessingException('multiple geometries in centerline layer')
 
         # create grid layer based on parameters
-        grid_layer = processing.run("qgis:regularpoints", {
+        results = processing.run("qgis:regularpoints", {
             'EXTENT':bathy_extent,
             'SPACING':parameters['INPUT_GRID_SPACE'],
             'INSET':0,
             'RANDOMIZE':False,
             'IS_SPACING':True,
             'CRS':bathy_crs,
-            'OUTPUT':'memory:'
+            'OUTPUT':'TEMPORARY_OUTPUT'
             }
             ) 
+        grid_lyr = results['OUTPUT']
 
         # clip grid layer
-        clipped_layer = processing.run("native:clip", {
-            'INPUT':grid_layer,
+        results = processing.run("native:clip", {
+            'INPUT':grid_lyr,
             'OVERLAY':mask_lyr,
-            'OUTPUT':'memory:'
+            'OUTPUT':'TEMPORARY_OUTPUT'
             })
+        clipped_grid_lyr = results['OUTPUT']
+
+        # add j, k, side fields to generated grid layer
+        grid_caps = clipped_grid_lyr.dataProvider().capabilities()
+        if caps & QgsVectorDataProvider.AddAttributes:
+            res = clipped_grid_lyr.dataProvider().addAttributes([QgsField('j_value', QVariant.Float), QgsField('k_value', QVariant.Float), QgsField('side', QVariant.Integer)])
+            clipped_grid_lyr.updateFields()
+
+        # add j, k, side fields to bathy layer
+        bathy_caps = bathy_lyr.dataProvider().capabilities()
+        if caps & QgsVectorDataProvider.AddAttributes:
+            res = bathy_lyr.dataProvider().addAttributes([QgsField('j_value', QVariant.Float), QgsField('k_value', QVariant.Float), QgsField('side', QVariant.Float)])
+            bathy_lyr.updateFields()
 
         # create list of segments in centerline
         cl_feature = cl_lyr.getFeatures()
         cl_geom = cl_feature.geometry()
         segments = cl_geom.parts()
-        # Retrieve the feature source and sink. The 'dest_id' variable is used
-        # to uniquely identify the feature sink, and must be included in the
-        # dictionary returned by the processAlgorithm function.
-        source = self.parameterAsSource(
-            parameters,
-            self.INPUT_BATHY,
-            context
-        )
-
-        if source is None:
-            raise QgsProcessingException(self.invalidSourceError(parameters, self.INPUT_BATHY))
-
-        (sink, dest_id) = self.parameterAsSink(
-            parameters,
-            self.OUTPUT,
-            context,
-            source.fields(),
-            source.wkbType(),
-            source.sourceCrs()
-        )
-
-        if sink is None:
-            raise QgsProcessingException(self.invalidSinkError(parameters, self.OUTPUT))
-
-        # Compute the number of steps to display within the progress bar and
-        # get features from source
-        total = 100.0 / source.featureCount() if source.featureCount() else 0
-        features = source.getFeatures()
-
-        for current, feature in enumerate(features):
-            # Stop the algorithm if cancel button has been clicked
-            if feedback.isCanceled():
-                break
-
-            # Add a feature in the sink
-            sink.addFeature(feature, QgsFeatureSink.FastInsert)
-
-            # Update the progress bar
-            feedback.setProgress(int(current * total))
 
         # return results
         return {self.OUTPUT: dest_id}
