@@ -18,8 +18,13 @@ from qgis.core import (QgsProcessing,
                        QgsProcessingParameterNumber,
                        QgsProcessingParameterEnum,
                        QgsProject,
+                       QgsVectorDataProvider,
+                       QgsField,
                        QgsProcessingParameterFeatureSink)
 from qgis import processing
+from shapely.geometry import Point
+from shapely.geometry import LineString
+import anint_functions
 
 
 class anint(QgsProcessingAlgorithm):
@@ -164,22 +169,82 @@ class anint(QgsProcessingAlgorithm):
             })
         clipped_grid_lyr = results['OUTPUT']
 
-        # add j, k, side fields to generated grid layer
+        # generate m, d, s, and seg_index fields for the grid layer
+        # m value is the distance along the centerline
+        # d value is the distance from the point to the centerline
+        # seg_index is the index of the line segment the point is closest to
         grid_caps = clipped_grid_lyr.dataProvider().capabilities()
-        if caps & QgsVectorDataProvider.AddAttributes:
-            res = clipped_grid_lyr.dataProvider().addAttributes([QgsField('j_value', QVariant.Float), QgsField('k_value', QVariant.Float), QgsField('side', QVariant.Integer)])
+        if grid_caps & QgsVectorDataProvider.AddAttributes:
+            # TODO this syntax isn't working - figure out why
+            res = clipped_grid_lyr.dataProvider().addAttributes([QgsField('m_value', QVariant.Float), QgsField('d_value', QVariant.Float), QgsField('s_value', QVariant.Integer), QgsField('seg_index', QVariant.Integer)])
             clipped_grid_lyr.updateFields()
 
-        # add j, k, side fields to bathy layer
+        # generate m, d, s, and seg_index fields for the bathy layer as above
         bathy_caps = bathy_lyr.dataProvider().capabilities()
-        if caps & QgsVectorDataProvider.AddAttributes:
-            res = bathy_lyr.dataProvider().addAttributes([QgsField('j_value', QVariant.Float), QgsField('k_value', QVariant.Float), QgsField('side', QVariant.Float)])
+        if bathy_caps & QgsVectorDataProvider.AddAttributes:
+            # TODO this syntax isn't working - figure out why
+            res = bathy_lyr.dataProvider().addAttributes([QgsField('m_value', QVariant.Float), QgsField('d_value', QVariant.Float), QgsField('s_value', QVariant.Integer), QgsField('seg_index', QVariant.Int)])
             bathy_lyr.updateFields()
 
         # create list of segments in centerline
         cl_feature = cl_lyr.getFeatures()
         cl_geom = cl_feature.geometry()
-        segments = cl_geom.parts()
+        cl_segments = cl_geom.parts()
+
+        # create a list of points in grid layer
+        grid_features = clipped_grid_lyr.getFeatures()
+
+        #create a list of points in bathy layer
+        bathy_features = bathy_lyr.getFeatures()
+
+        # determine "associated segment" and "sidedness" for each point in bathy layer
+        # this is done with the "signed triangle area" algorithm - 
+        # the sign (positive or negative) of this algorithm defines which side the point lies on.
+        # the smallest absolute value of the area for a given line segment is chosen as the "correct" segment
+        for point in grid_features:
+            sp_point = Point(point.geometry)
+            i = 0
+            seg_index = 0
+            for segment in cl_segments:
+                # TODO this line isn't right yet
+                sp_line = LineString(segment.geometry)
+                area = signedTriangleArea(sp_line, sp_point)
+                us_area = abs(area)
+                if i == 0:
+                    test_area = us_area
+                if us_area < test_area:
+                    us_area = test_area
+                    test_index = seg_index
+                i += 1
+                seg_index += 1
+            if area < 0:
+                # I don't remember which side is left, but it doesn't really matter
+                side = 1
+            else:
+                side = 0
+            # TODO update field values
+
+        for point in bathy_features:
+            sp_point = Point(point.geometry)
+            i = 0
+            seg_index = 0
+            for segment in cl_segments:
+                # TODO this line isn't right yet
+                sp_line = LineString(segment.geometry)
+                area = signedTriangleArea(sp_line, sp_point)
+                us_area = abs(area)
+                if i == 0:
+                    test_area = us_area
+                if us_area < test_area:
+                    us_area = test_area
+                    test_index = seg_index
+                i += 1
+                seg_index += 1
+            if area < 0:
+                side = 1
+            else:
+                side = 0
+            # TODO update field values
 
         # return results
         return {self.OUTPUT: dest_id}
