@@ -4,6 +4,10 @@ from shapely.geometry import Point
 from shapely.geometry import LineString
 
 def main():
+    # TODO add in checks for correct geometry types in layers
+    # TODO look for a module like clap.rs to strengthen use of arguments
+    # TODO add code to provide for rotating grid layer(?)
+    # TODO better error handling overall
     grid_space = sys.argv[4]
     power = sys.argv[5]
     radius = sys.argv[6]
@@ -32,8 +36,6 @@ def main():
     # check that centerline, mask layers only have one feature
     featureCountCheck(cl_lyr)
     featureCountCheck(mask_lyr)
-
-    # TODO create segment list
 
     # calculate side, m value, d value for bathy layer, add to bathymetry layer fields
     assignSide(bathy_lyr, cl_lyr)
@@ -66,36 +68,49 @@ def main():
 
     # TODO run the IDW function, export the gdf as a shapefile
 
+# function for creating columns on an existing gdf
 def createColumn(gdf, name, data_type):
     gdf.assign(name)
     gdf.astype({name : data_type})
     return gdf
 
+# simple check to ensure centerline, mask layers don't have multiple features, which would screw up
+# other functions
 def featureCountCheck(gdf):
     if len(gdf.index) > 1:
         sys.exit(f"multiple features in {gdf}")
     else:
         pass
 
+# this function calculates the inverse distance weighted z value for a grid point,
+# based on z values of bathy points. Radius is the search radius.
 def inverseDistanceWeighted(bathy_points, grid_points, power, radius, min_points, max_points):
-    sum = 0
+    # iterate over grid points
     for i in range(len(grid_points) - 1):
+        # these values have to be reset to zero/empty for each grid point
         dist_dict = {}
         l = 0
+        sum = 0
         gp = Point(grid_points[i].coords)
         gp_side = grid_points.at(i, 'side')
+        # iterate over bathy points
         for j in range(len(bathy_points) - 1):
             bp_side = bathy_points.at(j, 'side')
+            # limit interpolation to one side of the centerline
             if bp_side != gp_side:
                 continue
             else:
                 bp = Point(bathy_points[j].coords)
                 dist = bp.distance(gp)
+                # sorting the dictionary by distance makes it easier to compare to min/max point values
+                # store the bathy point index for finding z values in future step
                 temp_dict = {dist: j}
                 dist_dict.append(temp_dict)
         for key in dist_dict:
+            # count number of bathy points within search radius
             if key < radius:
                 l += 1
+        # compare number of bathy points within radius to min/max point values
         if l > max_points - 1:
             l = max_points - 1
         elif l < min_points - 1:
@@ -104,14 +119,20 @@ def inverseDistanceWeighted(bathy_points, grid_points, power, radius, min_points
     return(grid_points)
 
 def assignSide(point_layer, line_layer):
+    # create a list of all line coordinates to iterate over each segment
     line_coords = line_layer.apply(lambda geom: geom.coords, axis=1)
     for p in point_layer:
         temp_point = Point(p.coords)
         for i in range(len(line_coords) - 2):
+            # creating a line segment out of only two points
             temp_line = LineString(coords[i], coords[i + 1])
             temp_area = signedTriangleArea(temp_line, temp_point)
+            # set the initial area value on the first segment
             if coord == 0:
                 area = temp_area
+            # if abs area is smaller, replace. The assumption here is that the segment to which each point is
+            # closest (perpendicular distance) is the "correct" one. On a complicated line string a point could
+            # be on different sides of different segments.
             if abs(temp_area) < abs(area):
                 area = temp_area
         if area > 0:
@@ -119,6 +140,7 @@ def assignSide(point_layer, line_layer):
         else:
             side = 1
 
+        # TODO why is this giving me an error?
         point_layer.at(p, 'side') = side 
 
         return point_layer
@@ -126,8 +148,7 @@ def assignSide(point_layer, line_layer):
 def signedTriangleArea(test_line, test_point):
     # the "signed triangle area" formula returns an area value that is < 0 when the test point is on the
     # right side of the line, > 0 when on the left. This determines the "sidedness" of each point.
-    # smaller absolute value = closer to the line. This will be used to "associate" each point to the
-    # nearest segment of the centerline.
+    # smaller absolute value = closer to the line. 
     vertex_1 = test_line.coords[0]
     vertex_2 = test_line.coords[1]
     area = ((vertex_2.x - vertex_1.x) - (test_point.y - vertex_2.y)) - ((test_point.x - vertex_2.x) * (vertex_2.y - vertex_1.y))
