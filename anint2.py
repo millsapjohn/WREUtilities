@@ -66,7 +66,9 @@ def main():
     assignSide(grid_lyr, cl_lyr)
     assignMDValues(grid_lyr, cl_lyr)
 
-    # TODO run the IDW function, export the gdf as a shapefile
+    # perform the anisotropic IDW calculation
+    grid_lyr = inverseDistanceWeighted(bathy_lyr, grid_lyr, power, radius, min_points, max_points)
+    grid_lyr.to_file("grid_points.shp")
 
 # function for creating columns on an existing gdf
 def createColumn(gdf, name, data_type):
@@ -91,7 +93,10 @@ def inverseDistanceWeighted(bathy_points, grid_points, power, radius, min_points
         dist_dict = {}
         l = 0
         sum = 0
-        gp = Point(grid_points[i].coords)
+        # making a "dummy point" from the anisotropic coordinates
+        gp_x = grid_points.at(i, 'm_val')
+        gp_y = grid_points.at(i, 'd_val')
+        gp = Point(gp_x, gp_y)
         gp_side = grid_points.at(i, 'side')
         # iterate over bathy points
         for j in range(len(bathy_points) - 1):
@@ -100,12 +105,16 @@ def inverseDistanceWeighted(bathy_points, grid_points, power, radius, min_points
             if bp_side != gp_side:
                 continue
             else:
-                bp = Point(bathy_points[j].coords)
+                # making the comparison "dummy point" from anisotropic coordinates
+                bp_x = bathy_points.at(j, 'm_val')
+                bp_y = bathy_points.at(j, 'd_val')
+                bp = Point(bp_x, bp_y)
                 dist = bp.distance(gp)
                 # sorting the dictionary by distance makes it easier to compare to min/max point values
                 # store the bathy point index for finding z values in future step
                 temp_dict = {dist: j}
                 dist_dict.append(temp_dict)
+        dist_dict = sorted(dist_dict)
         for key in dist_dict:
             # count number of bathy points within search radius
             if key < radius:
@@ -115,6 +124,23 @@ def inverseDistanceWeighted(bathy_points, grid_points, power, radius, min_points
             l = max_points - 1
         elif l < min_points - 1:
             l = min_points - 1
+        # re-initialize numerator and denominator of IDW formula for each grid point
+        numerator = 0
+        denominator = 0
+        # iterate through the range of points within the search radius
+        for m in range(l - 1):
+            # get the bathy point index
+            point_no = list(dist_dict.values())[m]
+            # get the z value from the indexed point
+            bathy_z_val = bathy_points[point_no].z
+            # calculate numerator and denominator values for that point
+            temp_num = bathy_z_val / (dist_dict[m] ^ power)
+            temp_den = 1 / (dist_dict[m] ^ power)
+            # sum numerator and denominator values
+            numerator = numerator + temp_num
+            denominator = denominator + temp_den
+        grid_z_val = numerator / denominator
+        grid_points[i].z = grid_z_val
     
     return(grid_points)
 
@@ -128,7 +154,7 @@ def assignSide(point_layer, line_layer):
             temp_line = LineString(coords[i], coords[i + 1])
             temp_area = signedTriangleArea(temp_line, temp_point)
             # set the initial area value on the first segment
-            if coord == 0:
+            if i == 0:
                 area = temp_area
             # if abs area is smaller, replace. The assumption here is that the segment to which each point is
             # closest (perpendicular distance) is the "correct" one. On a complicated line string a point could
