@@ -1,5 +1,7 @@
 import sys
+import os
 from collections import OrderedDict
+os.environ['USE_PYGEOS'] = '0'
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Point
@@ -7,8 +9,6 @@ from shapely.geometry import LineString
 import progressbar
 
 def main():
-    # TODO fix Shapely GEOS version
-    # TODO add in checks for correct geometry types in layers
     # TODO look for a module like clap.rs to strengthen use of arguments
     grid_space = float(sys.argv[4])
     power = float(sys.argv[5])
@@ -21,6 +21,19 @@ def main():
     bathy_lyr = gpd.read_file(sys.argv[1])
     mask_lyr = gpd.read_file(sys.argv[2])
     cl_lyr = gpd.read_file(sys.argv[3])
+
+    # check that bathy points have z value
+    for index, row in bathy_lyr:
+        if row['geometry'].has_z != True:
+            sys.exit("point layer does not contain z values")
+        else:
+            pass
+
+    # check feature types of all three layers
+    print("Checking feature types")
+    featureTypeCheck(bathy_lyr, 'Point')
+    featureTypeCheck(mask_lyr, 'Polygon')
+    featureTypeCheck(cl_lyr, 'Linestring')
 
     # compare CRS for the three layers - need to be in the same CRS
     print('checking layer CRSs')
@@ -50,21 +63,15 @@ def main():
     max_x = float(b_box[2])
     max_y = float(b_box[3])
 
-    # generate grid layer, add necessary fields
-
     # add points to grid layer based on spacing value provided
     print('\n generating grid point layer')
-    total_points = (round((max_x - min_x) / grid_space) - 1) * (round((max_y - min_y) / grid_space)- 1)
-    print(f'{total_points} to be generated')
     point_list = []
-    # bar = progressbar.ProgressBar(max_value=total_points).start()
     for i in range((round((max_x - min_x) / grid_space)) - 1):
         for j in range((round((max_y - min_y) / grid_space)) - 1):
             x_coord = min_x + (i * grid_space)
             y_coord = min_y + (j * grid_space)
             pt = Point(x_coord, y_coord, 0.00)
             point_list.append({'geometry' : pt})
-            # bar.update(j + i * ((round(max_y - min_y) / grid_space)))
     grid_lyr = gpd.GeoDataFrame(point_list, geometry='geometry', crs=bathy_lyr.crs)
 
     # clip grid layer
@@ -76,6 +83,18 @@ def main():
     assignSide(grid_lyr, cl_lyr)
     print('\n assigning m, d values to grid points')
     assignMDValues(grid_lyr, cl_lyr)
+
+    # TODO generate r-tree index for bathy layer, grid layer 
+    # TODO generate gdfs for bathy, grid layers based on m, d coordinates
+    # TODO generate new gdf for mask layer based on m, d coordinates
+    # TODO assume points are equally spatially distributed
+    # TODO divide mask gdf such that each sub-polygon contains <max_points> number of bathy points
+    # TODO assign r-tree index to bathy, grid layers based on new sub-polygons
+    # TODO pass md gdfs to IDW function
+    # TODO IDW function calculates distance for each point within sub-polygon
+    # TODO if number is below min, expand to next level of index and calculate all distances
+    # TODO if new length of list is above max, sort by distance and trim
+    # TODO perform actual calculation
 
     # perform the anisotropic IDW calculation
     print('\n performing IDW interpolation on anisotropic coordinates')
@@ -91,6 +110,14 @@ def featureCountCheck(gdf):
         sys.exit(f"multiple features in {gdf}")
     else:
         pass
+
+# simple check to ensure layers only have the correct geometry types
+def featureTypeCheck(gdf, geom_type):
+    for index, row in gdf.iterrows():
+        if row['geometry'].geom_type != geom_type:
+            sys.exit(f'geometry in {gdf} is not of type {geom_type}')
+        else:
+            pass
 
 # this function calculates the inverse distance weighted z value for a grid point,
 # based on z values of bathy points. Radius is the search radius.
