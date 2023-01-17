@@ -13,7 +13,7 @@ is set up as a QGIS processing script at this time, and as of this commit (28-12
 ## anint2.py
 While the above module is intended to be a QGIS plugin, dealing with all the extraneous functionality is
 annoying while I'm trying to work out the logic. This one is a standalone Python module. As of this commit
-(12-01-2023) it doesn't work yet, but I'm getting close.
+(17-01-2023) it works, but is extremely slow. Need to work out a better system for the actual IDW processing.
 
 ## convertmm.py
 Simple script to convert .asc files from mm (millimeters) to in (inches).
