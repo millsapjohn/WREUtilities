@@ -1,30 +1,29 @@
 import sys
+from collections import OrderedDict
 import geopandas as gpd
+import pandas as pd
 from shapely.geometry import Point
 from shapely.geometry import LineString
+import progressbar
 
 def main():
+    # TODO fix Shapely GEOS version
     # TODO add in checks for correct geometry types in layers
     # TODO look for a module like clap.rs to strengthen use of arguments
-    # TODO add code to provide for rotating grid layer(?)
-    # TODO better error handling overall
-    grid_space = sys.argv[4]
-    power = sys.argv[5]
-    radius = sys.argv[6]
-    min_points = sys.argv[7]
-    max_points = sys.argv[8]
+    grid_space = float(sys.argv[4])
+    power = float(sys.argv[5])
+    radius = float(sys.argv[6])
+    min_points = int(sys.argv[7])
+    max_points = int(sys.argv[8])
 
     # get data source and feature layer for bathymetry, mask (outline), and centerline
+    print('loading layers')
     bathy_lyr = gpd.read_file(sys.argv[1])
     mask_lyr = gpd.read_file(sys.argv[2])
     cl_lyr = gpd.read_file(sys.argv[3])
 
-    # create side, m_val, d_val columns in bathy layer
-    createColumn(bathy_lyr, 'side', 'int64')
-    createColumn(bathy_lyr, 'm_val', 'float64')
-    createColumn(bathy_lyr, 'd_val', 'float64')
-
     # compare CRS for the three layers - need to be in the same CRS
+    print('checking layer CRSs')
     bathy_crs_code = bathy_lyr.crs.to_epsg(min_confidence=20)
     mask_crs_code = mask_lyr.crs.to_epsg(min_confidence=20)
     cl_crs_code = cl_lyr.crs.to_epsg(min_confidence=20)
@@ -34,47 +33,56 @@ def main():
         sys.exit("mismatched layer CRS")
 
     # check that centerline, mask layers only have one feature
+    print('checking centerline and mask layers')
     featureCountCheck(cl_lyr)
     featureCountCheck(mask_lyr)
 
     # calculate side, m value, d value for bathy layer, add to bathymetry layer fields
+    print('assigning side value to bathymetry points')
     assignSide(bathy_lyr, cl_lyr)
+    print('\n assigning m, d values to bathymetry points')
     assignMDValues(bathy_lyr, cl_lyr)
 
     # get bounding box of mask layer - will clip later
     b_box = mask_lyr.total_bounds
-    min_x = b_box[0]
-    max_x = b_box[1]
-    min_y = b_box[2]
-    max_y = b_box[3]
+    min_x = float(b_box[0])
+    min_y = float(b_box[1])
+    max_x = float(b_box[2])
+    max_y = float(b_box[3])
 
     # generate grid layer, add necessary fields
-    grid_lyr = gpd.GeoDataFrame(columns=['side', 'm_val', 'd_val', 'geom'], geometry='geom')
 
     # add points to grid layer based on spacing value provided
+    print('\n generating grid point layer')
+    total_points = (round((max_x - min_x) / grid_space) - 1) * (round((max_y - min_y) / grid_space)- 1)
+    print(f'{total_points} to be generated')
+    point_list = []
+    # bar = progressbar.ProgressBar(max_value=total_points).start()
     for i in range((round((max_x - min_x) / grid_space)) - 1):
         for j in range((round((max_y - min_y) / grid_space)) - 1):
             x_coord = min_x + (i * grid_space)
             y_coord = min_y + (j * grid_space)
-            pt = Point(x_coord, y_coord)
-            grid_lyr.add(pt)
+            pt = Point(x_coord, y_coord, 0.00)
+            point_list.append({'geometry' : pt})
+            # bar.update(j + i * ((round(max_y - min_y) / grid_space)))
+    grid_lyr = gpd.GeoDataFrame(point_list, geometry='geometry', crs=bathy_lyr.crs)
 
     # clip grid layer
-    grid_lyr = gpd.clip(grid_lyr, mask_lyr)
+    print('\n clipping grid layer')
+    gpd.clip(grid_lyr, mask_lyr)
 
     # calculate side, m value, d value for grid layer, add to grid layer fields
+    print('assigning side value to grid points')
     assignSide(grid_lyr, cl_lyr)
+    print('\n assigning m, d values to grid points')
     assignMDValues(grid_lyr, cl_lyr)
 
     # perform the anisotropic IDW calculation
+    print('\n performing IDW interpolation on anisotropic coordinates')
     grid_lyr = inverseDistanceWeighted(bathy_lyr, grid_lyr, power, radius, min_points, max_points)
+    print('\n exporting grid points to Shapefile')
     grid_lyr.to_file("grid_points.shp")
-
-# function for creating columns on an existing gdf
-def createColumn(gdf, name, data_type):
-    gdf.assign(name)
-    gdf.astype({name : data_type})
-    return gdf
+    print('processing complete')
 
 # simple check to ensure centerline, mask layers don't have multiple features, which would screw up
 # other functions
@@ -88,34 +96,37 @@ def featureCountCheck(gdf):
 # based on z values of bathy points. Radius is the search radius.
 def inverseDistanceWeighted(bathy_points, grid_points, power, radius, min_points, max_points):
     # iterate over grid points
+    bar = progressbar.ProgressBar(min_value=0).start()
     for i in range(len(grid_points) - 1):
         # these values have to be reset to zero/empty for each grid point
         dist_dict = {}
         l = 0
         sum = 0
+        x_coord = grid_points.at[i, 'geometry'].x
+        y_coord = grid_points.at[i, 'geometry'].y
         # making a "dummy point" from the anisotropic coordinates
-        gp_x = grid_points.at(i, 'm_val')
-        gp_y = grid_points.at(i, 'd_val')
+        gp_x = float(grid_points['m_val'].loc[i])
+        gp_y = float(grid_points['d_val'].loc[i])
         gp = Point(gp_x, gp_y)
-        gp_side = grid_points.at(i, 'side')
+        gp_side = grid_points['side'].loc[i]
         # iterate over bathy points
         for j in range(len(bathy_points) - 1):
-            bp_side = bathy_points.at(j, 'side')
+            bp_side = bathy_points['side'].loc[j]
             # limit interpolation to one side of the centerline
             if bp_side != gp_side:
                 continue
             else:
                 # making the comparison "dummy point" from anisotropic coordinates
-                bp_x = bathy_points.at(j, 'm_val')
-                bp_y = bathy_points.at(j, 'd_val')
+                bp_x = bathy_points['m_val'].loc[j]
+                bp_y = bathy_points['d_val'].loc[j]
                 bp = Point(bp_x, bp_y)
                 dist = bp.distance(gp)
                 # sorting the dictionary by distance makes it easier to compare to min/max point values
                 # store the bathy point index for finding z values in future step
-                temp_dict = {dist: j}
-                dist_dict.append(temp_dict)
-        dist_dict = sorted(dist_dict)
-        for key in dist_dict:
+                temp_dict = {dist:i}
+                dist_dict.update(temp_dict)
+        od = OrderedDict(sorted(dist_dict.items(), key=lambda t: t[0]))
+        for key in od:
             # count number of bathy points within search radius
             if key < radius:
                 l += 1
@@ -128,31 +139,42 @@ def inverseDistanceWeighted(bathy_points, grid_points, power, radius, min_points
         numerator = 0
         denominator = 0
         # iterate through the range of points within the search radius
+        point_list = list(od.values())
+        dist_list = list(od.keys())
         for m in range(l - 1):
             # get the bathy point index
-            point_no = list(dist_dict.values())[m]
+            point_no = point_list[m]
             # get the z value from the indexed point
-            bathy_z_val = bathy_points[point_no].z
+            bathy_z_val = bathy_points.iloc[point_no].geometry.z
             # calculate numerator and denominator values for that point
-            temp_num = bathy_z_val / (dist_dict[m] ^ power)
-            temp_den = 1 / (dist_dict[m] ^ power)
+            temp_num = bathy_z_val / (dist_list[m] ** power)
+            temp_den = 1 / (dist_list[m] ** power)
             # sum numerator and denominator values
             numerator = numerator + temp_num
             denominator = denominator + temp_den
         grid_z_val = numerator / denominator
-        grid_points[i].z = grid_z_val
+        grid_points.loc[i, 'geometry'] = Point(x_coord, y_coord, grid_z_val)
+        bar.update(i)
     
     return(grid_points)
 
 def assignSide(point_layer, line_layer):
     # create a list of all line coordinates to iterate over each segment
-    line_coords = line_layer.apply(lambda geom: geom.coords, axis=1)
-    for p in point_layer:
-        temp_point = Point(p.coords)
-        for i in range(len(line_coords) - 2):
+    line_coords = []
+    for index, row in line_layer.iterrows():
+        for pt in list(row['geometry'].coords):
+            line_coords.append(Point(pt))
+    point_coords = []
+    for index, row in point_layer.iterrows():
+        for pt in list(row['geometry'].coords):
+            point_coords.append(Point(pt))
+    bar = progressbar.ProgressBar(min_value=0).start()
+    side_values = pd.Series(dtype='int64')
+    for i in range(len(point_coords) - 1):
+        for j in range(len(line_coords) - 2):
             # creating a line segment out of only two points
-            temp_line = LineString(coords[i], coords[i + 1])
-            temp_area = signedTriangleArea(temp_line, temp_point)
+            temp_line = LineString([line_coords[j], line_coords[j + 1]])
+            temp_area = signedTriangleArea(temp_line, point_coords[i])
             # set the initial area value on the first segment
             if i == 0:
                 area = temp_area
@@ -165,29 +187,38 @@ def assignSide(point_layer, line_layer):
             side = 0
         else:
             side = 1
+        side_values = pd.concat([side_values, pd.Series(index=[i], data=[side])])
+        bar.update(i)
 
-        # TODO why is this giving me an error?
-        point_layer.at(p, 'side') = side 
-
-        return point_layer
+    point_layer['side'] = side_values
+    return point_layer
 
 def signedTriangleArea(test_line, test_point):
     # the "signed triangle area" formula returns an area value that is < 0 when the test point is on the
     # right side of the line, > 0 when on the left. This determines the "sidedness" of each point.
     # smaller absolute value = closer to the line. 
-    vertex_1 = test_line.coords[0]
-    vertex_2 = test_line.coords[1]
+    vertex_1 = Point(test_line.coords[0])
+    vertex_2 = Point(test_line.coords[1])
+    test_point = Point(test_point)
     area = ((vertex_2.x - vertex_1.x) - (test_point.y - vertex_2.y)) - ((test_point.x - vertex_2.x) * (vertex_2.y - vertex_1.y))
 
     return area
 
 def assignMDValues(point_layer, cl_layer):
-    for p in point_layer:
-        m_val = cl_layer.project(p)
-        proj_point = cl_layer.interpolate(m_val)
+    m_values = pd.Series(dtype='float64')
+    d_values = pd.Series(dtype='float64')
+    cl_string = LineString(cl_layer.at[0, 'geometry'])
+    bar = progressbar.ProgressBar(min_value=0).start()
+    for i in range(len(point_layer) - 1):
+        p = Point(point_layer.at[i, 'geometry'])
+        m_val = cl_string.project(p)
+        proj_point = cl_string.interpolate(m_val)
         d_val = p.distance(proj_point)
-        point_layer.at(p, 'm_val') = m_val
-        point_layer.at(p, 'd_val') = d_val
+        m_values = pd.concat([m_values, pd.Series(index=[i], data=[m_val])])
+        d_values = pd.concat([d_values, pd.Series(index=[i], data=[d_val])])
+        bar.update(i)
+    point_layer['m_val'] = m_values
+    point_layer['d_val'] = d_values
 
     return point_layer
 
