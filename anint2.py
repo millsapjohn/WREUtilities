@@ -4,8 +4,7 @@ from collections import OrderedDict
 os.environ['USE_PYGEOS'] = '0'
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Point
-from shapely.geometry import LineString
+import shapely
 import progressbar
 
 def main():
@@ -19,11 +18,14 @@ def main():
     # get data source and feature layer for bathymetry, mask (outline), and centerline
     print('loading layers')
     bathy_lyr = gpd.read_file(sys.argv[1])
+    bathy_lyr.name = 'bathymetry layer'
     mask_lyr = gpd.read_file(sys.argv[2])
+    mask_lyr.name = 'mask layer'
     cl_lyr = gpd.read_file(sys.argv[3])
+    cl_lyr.name = 'centerline layer'
 
     # check that bathy points have z value
-    for index, row in bathy_lyr:
+    for index, row in bathy_lyr.iterrows():
         if row['geometry'].has_z != True:
             sys.exit("point layer does not contain z values")
         else:
@@ -32,8 +34,10 @@ def main():
     # check feature types of all three layers
     print("Checking feature types")
     featureTypeCheck(bathy_lyr, 'Point')
-    featureTypeCheck(mask_lyr, 'Polygon')
-    featureTypeCheck(cl_lyr, 'Linestring')
+    mask_lyr = polyTypeCheck(mask_lyr)
+    featureTypeCheck(cl_lyr, 'LineString')
+    print(mask_lyr.head())
+    sys.exit()
 
     # compare CRS for the three layers - need to be in the same CRS
     print('checking layer CRSs')
@@ -65,14 +69,23 @@ def main():
 
     # add points to grid layer based on spacing value provided
     print('\n generating grid point layer')
-    point_list = []
+    grid_point_list = []
     for i in range((round((max_x - min_x) / grid_space)) - 1):
         for j in range((round((max_y - min_y) / grid_space)) - 1):
             x_coord = min_x + (i * grid_space)
             y_coord = min_y + (j * grid_space)
             pt = Point(x_coord, y_coord, 0.00)
-            point_list.append({'geometry' : pt})
-    grid_lyr = gpd.GeoDataFrame(point_list, geometry='geometry', crs=bathy_lyr.crs)
+            grid_point_list.append({'geometry' : pt})
+    grid_lyr = gpd.GeoDataFrame(grid_point_list, geometry='geometry', crs=bathy_lyr.crs)
+
+    bathy_point_list = []
+    for index, row in bathy_lyr.iterrows():
+        m_coord = row['m_val']
+        d_coord = row['d_val']
+        pt = Point(m_coord, d_coord)
+        bathy_point_list.append({'geometry' : pt})
+    new_bathy_lyr = gpd.GeoDataFrame(bathy_point_list, geometry='geometry')
+    new_bathy_lyr.to_file('bathy_pts.shp')
 
     # clip grid layer
     print('\n clipping grid layer')
@@ -115,9 +128,31 @@ def featureCountCheck(gdf):
 def featureTypeCheck(gdf, geom_type):
     for index, row in gdf.iterrows():
         if row['geometry'].geom_type != geom_type:
-            sys.exit(f'geometry in {gdf} is not of type {geom_type}')
+            sys.exit(f'geometry in {gdf.name} is not of type {geom_type}')
         else:
             pass
+
+# more complex function for polygons, as some polygon shapefiles come in as multilinestrings...
+# TODO this isn't working correctly...
+def polyTypeCheck(gdf):
+    for index, row in gdf.iterrows():
+        if row['geometry'].geom_type == 'Polygon':
+            pass
+        elif row['geometry'].geom_type == 'MultiLineString':
+            inner_list = []
+            exploded = gdf.explode(index_parts=True)
+            for index, row in exploded.iterrows():
+                coord_list = shapely.get_coordinates(row['geometry']).tolist()
+                ring = shapely.linearrings(coord_list)
+                inner_list.append(ring)
+                polygon = shapely.polygons(inner_list[0], holes=inner_list[0:])
+                poly_list = []
+                poly_dict = {'geometry' : polygon}
+                poly_list.append(poly_dict)
+                new_mask_lyr = gpd.GeoDataFrame(poly_list, geometry='geometry', crs=gdf.crs)
+        else:
+            sys.exit('mask layer cannot be converted to polygons')
+    return new_mask_lyr
 
 # this function calculates the inverse distance weighted z value for a grid point,
 # based on z values of bathy points. Radius is the search radius.
@@ -132,26 +167,20 @@ def inverseDistanceWeighted(bathy_points, grid_points, power, radius, min_points
         x_coord = grid_points.at[i, 'geometry'].x
         y_coord = grid_points.at[i, 'geometry'].y
         # making a "dummy point" from the anisotropic coordinates
-        gp_x = float(grid_points['m_val'].loc[i])
-        gp_y = float(grid_points['d_val'].loc[i])
+        gp_x = grid_points.at[i, 'm_val']
+        gp_y = grid_points.at[i, 'd_val']
         gp = Point(gp_x, gp_y)
-        gp_side = grid_points['side'].loc[i]
         # iterate over bathy points
         for j in range(len(bathy_points) - 1):
-            bp_side = bathy_points['side'].loc[j]
-            # limit interpolation to one side of the centerline
-            if bp_side != gp_side:
-                continue
-            else:
-                # making the comparison "dummy point" from anisotropic coordinates
-                bp_x = bathy_points['m_val'].loc[j]
-                bp_y = bathy_points['d_val'].loc[j]
-                bp = Point(bp_x, bp_y)
-                dist = bp.distance(gp)
-                # sorting the dictionary by distance makes it easier to compare to min/max point values
-                # store the bathy point index for finding z values in future step
-                temp_dict = {dist:i}
-                dist_dict.update(temp_dict)
+            # making the comparison "dummy point" from anisotropic coordinates
+            bp_x = bathy_points.at[j, 'm_val']
+            bp_y = bathy_points.at[j, 'd_val']
+            bp = Point(bp_x, bp_y)
+            dist = bp.distance(gp)
+            # sorting the dictionary by distance makes it easier to compare to min/max point values
+            # store the bathy point index for finding z values in future step
+            temp_dict = {dist:i}
+            dist_dict.update(temp_dict)
         od = OrderedDict(sorted(dist_dict.items(), key=lambda t: t[0]))
         for key in od:
             # count number of bathy points within search radius
@@ -241,6 +270,8 @@ def assignMDValues(point_layer, cl_layer):
         m_val = cl_string.project(p)
         proj_point = cl_string.interpolate(m_val)
         d_val = p.distance(proj_point)
+        if point_layer.at[i, 'side'] == 0:
+            d_val = d_val * -1
         m_values = pd.concat([m_values, pd.Series(index=[i], data=[m_val])])
         d_values = pd.concat([d_values, pd.Series(index=[i], data=[d_val])])
         bar.update(i)
