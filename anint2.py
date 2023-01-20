@@ -38,7 +38,7 @@ def main():
             pass
 
     # check feature types of all three layers
-    print("Checking feature types")
+    print("checking feature types")
     featureTypeCheck(bathy_lyr, 'Point')
     mask_lyr = polyTypeCheck(mask_lyr)
     featureTypeCheck(cl_lyr, 'LineString')
@@ -62,7 +62,7 @@ def main():
     # calculate side, m value, d value for bathy layer, add to bathymetry layer fields
     print('assigning side value to bathymetry points')
     assignSide(bathy_lyr, cl_lyr)
-    print('\n assigning m, d values to bathymetry points')
+    print('\nassigning m, d values to bathymetry points')
     assignMDValues(bathy_lyr, cl_lyr)
 
     # get bounding box of mask layer - will clip later
@@ -73,7 +73,7 @@ def main():
     max_y = float(b_box[3])
 
     # add points to grid layer based on spacing value provided
-    print('\n generating grid point layer')
+    print('\ngenerating grid point layer')
     grid_point_list = []
     for i in range((round((max_x - min_x) / grid_space)) - 1):
         for j in range((round((max_y - min_y) / grid_space)) - 1):
@@ -84,13 +84,13 @@ def main():
     grid_lyr = gpd.GeoDataFrame(grid_point_list, geometry='geometry', crs=bathy_lyr.crs)
 
     # clip grid layer
-    print('\n clipping grid layer')
+    print('clipping grid layer')
     gpd.clip(grid_lyr, mask_lyr)
 
     # calculate side, m value, d value for grid layer, add to grid layer fields
     print('assigning side value to grid points')
     assignSide(grid_lyr, cl_lyr)
-    print('\n assigning m, d values to grid points')
+    print('\nassigning m, d values to grid points')
     assignMDValues(grid_lyr, cl_lyr)
 
     # generate new bathy, grid layers with m, d coordinates
@@ -100,19 +100,19 @@ def main():
     md_grid_lyr = mdPointLayer(grid_lyr)
 
     # perform the anisotropic IDW calculation
-    print('\n performing IDW interpolation on anisotropic coordinates')
-    grid_lyr = invDistWeight(grid_lyr, md_bathy_lyr, md_grid_lyr, power, radius, min_points, max_points, bathy_index)
-    print('\n exporting grid points to Shapefile')
+    print('\nperforming IDW interpolation on anisotropic coordinates')
+    new_grid_lyr = invDistWeight(grid_lyr, md_bathy_lyr, md_grid_lyr, power, radius, min_points, max_points, bathy_index)
+    print('\nexporting grid points to Shapefile')
     # TODO check if grid layer already exists, overwrite
-    grid_lyr.to_file("grid_points.shp")
+    new_grid_lyr.to_file("grid_points.shp")
     print('processing complete')
 
 # function to calculate the z value for grid points using inverse distance weighted method of m, d coordinates
 def invDistWeight(grid_lyr, bathy_md_lyr, grid_md_lyr, power, radius, min_points, max_points, sindex):
     bar = progressbar.ProgressBar(min_value=0).start()
     for index, row in grid_md_lyr.iterrows():
-        x_coord = grid_lyr.iloc[index, 'geometry'].x
-        y_coord = grid_lyr.iloc[index, 'geometry'].y
+        x_coord = grid_lyr.at[index, 'geometry'].x
+        y_coord = grid_lyr.at[index, 'geometry'].y
         pt = row['geometry']
         # generate a polygon corresponding to the search radius specified
         buff = shapely.buffer(pt, radius, quad_segs=64)
@@ -144,7 +144,7 @@ def invDistWeight(grid_lyr, bathy_md_lyr, grid_md_lyr, power, radius, min_points
             match_dist_dict = OrderedDict(sorted(match_dist_dict.items(), key=lambda t: t[0]))
             count = 0
             while count < extra_rows - 1:
-                od.popitem(last=True)
+                match_dist_dict.popitem(last=True)
                 count += 1
         numerator = 0
         denominator = 0
@@ -155,15 +155,18 @@ def invDistWeight(grid_lyr, bathy_md_lyr, grid_md_lyr, power, radius, min_points
             # get the bathy point index
             point_no = point_list[m]
             # get the z value from the indexed point
-            bathy_z_val = bathy_md_lyr.iloc[point_no].geometry.z
+            bathy_z_val = bathy_md_lyr.at[point_no, 'geometry'].z
             # calculate numerator and denominator values for that point
             temp_num = bathy_z_val / (dist_list[m] ** power)
             temp_den = 1 / (dist_list[m] ** power)
             # sum numerator and denominator values
             numerator = numerator + temp_num
             denominator = denominator + temp_den
-        grid_z_val = numerator / denominator
-        grid_lyr.loc[i, 'geometry'] = shapely.Point(x_coord, y_coord, grid_z_val)
+        if numerator == 0:
+            grid_z_val = 0.00
+        else:
+            grid_z_val = numerator / denominator
+        grid_lyr.at[index, 'geometry'] = shapely.Point(x_coord, y_coord, grid_z_val)
         bar.update(index)
 
     return(grid_lyr)
@@ -171,7 +174,6 @@ def invDistWeight(grid_lyr, bathy_md_lyr, grid_md_lyr, power, radius, min_points
 # function to create new gdf from m, d values
 def mdPointLayer(gdf):
     point_list = []
-    bar = progressbar.ProgressBar(min_value=0).start()
     for index, row in gdf.iterrows():
         m_val = row['m_val']
         d_val = row['d_val']
@@ -181,7 +183,6 @@ def mdPointLayer(gdf):
             z_val = 0.00
         pt = shapely.Point(m_val, d_val, z_val)
         point_list.append({'geometry' : pt})
-        bar.update(index)
     new_layer = gpd.GeoDataFrame(point_list, geometry='geometry')
     return new_layer
 
