@@ -6,9 +6,10 @@ import geopandas as gpd
 import pandas as pd
 import shapely
 import progressbar
+# import argparse
 
 def main():
-    # TODO look for a module like clap.rs to strengthen use of arguments
+    # TODO set up argparse
     grid_space = float(sys.argv[4])
     power = float(sys.argv[5])
     radius = float(sys.argv[6])
@@ -23,11 +24,16 @@ def main():
     mask_lyr.name = 'mask layer'
     cl_lyr = gpd.read_file(sys.argv[3])
     cl_lyr.name = 'centerline layer'
+    
+    # check that centerline, mask layers only have one feature
+    print('checking centerline and mask layers')
+    featureCountCheck(cl_lyr)
+    featureCountCheck(mask_lyr)
 
     # check that bathy points have z value
     for index, row in bathy_lyr.iterrows():
         if row['geometry'].has_z != True:
-            sys.exit("point layer does not contain z values")
+            sys.exit("one or more features in point layer does not contain z value")
         else:
             pass
 
@@ -36,8 +42,12 @@ def main():
     featureTypeCheck(bathy_lyr, 'Point')
     mask_lyr = polyTypeCheck(mask_lyr)
     featureTypeCheck(cl_lyr, 'LineString')
-    print(mask_lyr.head())
-    sys.exit()
+
+    # convert mask layer geometry to multipolygon
+    mask_geom = mask_lyr['geometry'].iloc[0]
+    if isinstance(mask_geom, shapely.Polygon):
+        mask_geom = shapely.MultiPolygon([mask_geom])
+        mask_lyr['geometry'].iloc[0] = mask_geom
 
     # compare CRS for the three layers - need to be in the same CRS
     print('checking layer CRSs')
@@ -48,11 +58,6 @@ def main():
     # check that layers have the same CRS code
     if bathy_crs_code != mask_crs_code or bathy_crs_code != cl_crs_code:
         sys.exit("mismatched layer CRS")
-
-    # check that centerline, mask layers only have one feature
-    print('checking centerline and mask layers')
-    featureCountCheck(cl_lyr)
-    featureCountCheck(mask_lyr)
 
     # calculate side, m value, d value for bathy layer, add to bathymetry layer fields
     print('assigning side value to bathymetry points')
@@ -78,15 +83,6 @@ def main():
             grid_point_list.append({'geometry' : pt})
     grid_lyr = gpd.GeoDataFrame(grid_point_list, geometry='geometry', crs=bathy_lyr.crs)
 
-    bathy_point_list = []
-    for index, row in bathy_lyr.iterrows():
-        m_coord = row['m_val']
-        d_coord = row['d_val']
-        pt = Point(m_coord, d_coord)
-        bathy_point_list.append({'geometry' : pt})
-    new_bathy_lyr = gpd.GeoDataFrame(bathy_point_list, geometry='geometry')
-    new_bathy_lyr.to_file('bathy_pts.shp')
-
     # clip grid layer
     print('\n clipping grid layer')
     gpd.clip(grid_lyr, mask_lyr)
@@ -97,24 +93,90 @@ def main():
     print('\n assigning m, d values to grid points')
     assignMDValues(grid_lyr, cl_lyr)
 
-    # TODO generate r-tree index for bathy layer, grid layer 
-    # TODO generate gdfs for bathy, grid layers based on m, d coordinates
-    # TODO generate new gdf for mask layer based on m, d coordinates
-    # TODO assume points are equally spatially distributed
-    # TODO divide mask gdf such that each sub-polygon contains <max_points> number of bathy points
-    # TODO assign r-tree index to bathy, grid layers based on new sub-polygons
-    # TODO pass md gdfs to IDW function
-    # TODO IDW function calculates distance for each point within sub-polygon
-    # TODO if number is below min, expand to next level of index and calculate all distances
-    # TODO if new length of list is above max, sort by distance and trim
-    # TODO perform actual calculation
+    # generate new bathy, grid layers with m, d coordinates
+    print('generating new bathy, grid layers')
+    md_bathy_lyr = mdPointLayer(bathy_lyr)
+    bathy_index = md_bathy_lyr.sindex
+    md_grid_lyr = mdPointLayer(grid_lyr)
 
     # perform the anisotropic IDW calculation
     print('\n performing IDW interpolation on anisotropic coordinates')
-    grid_lyr = inverseDistanceWeighted(bathy_lyr, grid_lyr, power, radius, min_points, max_points)
+    grid_lyr = invDistWeight(grid_lyr, md_bathy_lyr, md_grid_lyr, power, radius, min_points, max_points, bathy_index)
     print('\n exporting grid points to Shapefile')
     grid_lyr.to_file("grid_points.shp")
     print('processing complete')
+
+# function to calculate the z value for grid points using inverse distance weighted method of m, d coordinates
+def invDistWeight(grid_lyr, bathy_md_lyr, grid_md_lyr, power, radius, min_points, max_points, sindex):
+    for index, row in grid_md_lyr:
+        pt = row['geometry']
+        # generate a polygon corresponding to the search radius specified
+        buff = shapely.buffer(pt, radius, quad_segs=64)
+        # rough estimate of possible matches based on spatial index
+        possible_matches_index = list(sindex.intersection(buff))
+        possible_matches = bathy_md_lyr.iloc[possible_matches_index]
+        # exact list of matches
+        precise_matches = possible_matches[possible_matches.intersects(buff)]
+        # if total matches less than specified minimum, expand search radius until criteria is met
+        if len(precise_matches) < min_points:
+            i = 1
+            while len(precise_matches) < min_points:
+                new_rad = radius + (i * 5)
+                buff = shapely.buffer(pt, new_rad, quad_segs=64)
+                possible_matches_index = list(sindex.intersection(buff))
+                possible_matches = bathy_md_lyr.iloc[possible_matches_index]
+                precise_matches = possible_matches[possible_matches.intersects(buff)]
+                i += 1
+        # putting this here because I think this minimizes the number of duplicate operations...
+        match_pts = gpd.GeoDataFrame(precise_matches)
+        match_dist_dict = {}
+        for index, row2 in match_pts:
+            dist = row2['geometry'].distance(pt)
+            temp_dict = {dist : row2}
+            match_dist_dict.update(temp_dict)
+        # this has to come second in case expanding the search radius above grabs a ton of points
+        if len(match_dist_dict) > max_points:
+            extra_rows = len(match_dist_dict) - max_points
+            match_dist_dict = OrderedDict(sorted(match_dist_dict.items(), key=lambda t: t[0]))
+            count = 0
+            while count < extra_rows - 1:
+                od.popitem(last=True)
+                count += 1
+        numerator = 0
+        denominator = 0
+        # iterate through the range of points within the search radius
+        point_list = list(match_dist_dict.values())
+        dist_list = list(match_dist_dict.keys())
+        for m in range(len(point_list) - 1):
+            # get the bathy point index
+            point_no = point_list[m]
+            # get the z value from the indexed point
+            bathy_z_val = bathy_md_lyr.iloc[point_no].geometry.z
+            # calculate numerator and denominator values for that point
+            temp_num = bathy_z_val / (dist_list[m] ** power)
+            temp_den = 1 / (dist_list[m] ** power)
+            # sum numerator and denominator values
+            numerator = numerator + temp_num
+            denominator = denominator + temp_den
+        grid_z_val = numerator / denominator
+        grid_lyr.loc[i, 'geometry'] = Point(x_coord, y_coord, grid_z_val)
+
+    return(grid_lyr)
+
+# function to create new gdf from m, d values
+def mdPointLayer(gdf):
+    point_list = []
+    for index, row in gdf.iterrows():
+        m_val = row['m_val']
+        d_val = row['d_val']
+        if row['geometry'].has_z == True:
+            z_val = row['geometry'].z
+        else:
+            z_val = 0.00
+        pt = shapely.Point(m_val, d_val, z_val)
+        point_list.append({'geometry' : pt})
+    new_layer = gpd.GeoDataFrame(point_list, geometry='geometry')
+    return new_layer
 
 # simple check to ensure centerline, mask layers don't have multiple features, which would screw up
 # other functions
@@ -133,11 +195,12 @@ def featureTypeCheck(gdf, geom_type):
             pass
 
 # more complex function for polygons, as some polygon shapefiles come in as multilinestrings...
-# TODO this isn't working correctly...
+# multilinestring shapefiles have to be manually converted to polygons with holes
 def polyTypeCheck(gdf):
     for index, row in gdf.iterrows():
         if row['geometry'].geom_type == 'Polygon':
-            pass
+            # length of layer is checked first, so if row 0 is correct, simply pass on the existing gdf
+            new_mask_lyr = gdf
         elif row['geometry'].geom_type == 'MultiLineString':
             inner_list = []
             exploded = gdf.explode(index_parts=True)
@@ -153,66 +216,6 @@ def polyTypeCheck(gdf):
         else:
             sys.exit('mask layer cannot be converted to polygons')
     return new_mask_lyr
-
-# this function calculates the inverse distance weighted z value for a grid point,
-# based on z values of bathy points. Radius is the search radius.
-def inverseDistanceWeighted(bathy_points, grid_points, power, radius, min_points, max_points):
-    # iterate over grid points
-    bar = progressbar.ProgressBar(min_value=0).start()
-    for i in range(len(grid_points) - 1):
-        # these values have to be reset to zero/empty for each grid point
-        dist_dict = {}
-        l = 0
-        sum = 0
-        x_coord = grid_points.at[i, 'geometry'].x
-        y_coord = grid_points.at[i, 'geometry'].y
-        # making a "dummy point" from the anisotropic coordinates
-        gp_x = grid_points.at[i, 'm_val']
-        gp_y = grid_points.at[i, 'd_val']
-        gp = Point(gp_x, gp_y)
-        # iterate over bathy points
-        for j in range(len(bathy_points) - 1):
-            # making the comparison "dummy point" from anisotropic coordinates
-            bp_x = bathy_points.at[j, 'm_val']
-            bp_y = bathy_points.at[j, 'd_val']
-            bp = Point(bp_x, bp_y)
-            dist = bp.distance(gp)
-            # sorting the dictionary by distance makes it easier to compare to min/max point values
-            # store the bathy point index for finding z values in future step
-            temp_dict = {dist:i}
-            dist_dict.update(temp_dict)
-        od = OrderedDict(sorted(dist_dict.items(), key=lambda t: t[0]))
-        for key in od:
-            # count number of bathy points within search radius
-            if key < radius:
-                l += 1
-        # compare number of bathy points within radius to min/max point values
-        if l > max_points - 1:
-            l = max_points - 1
-        elif l < min_points - 1:
-            l = min_points - 1
-        # re-initialize numerator and denominator of IDW formula for each grid point
-        numerator = 0
-        denominator = 0
-        # iterate through the range of points within the search radius
-        point_list = list(od.values())
-        dist_list = list(od.keys())
-        for m in range(l - 1):
-            # get the bathy point index
-            point_no = point_list[m]
-            # get the z value from the indexed point
-            bathy_z_val = bathy_points.iloc[point_no].geometry.z
-            # calculate numerator and denominator values for that point
-            temp_num = bathy_z_val / (dist_list[m] ** power)
-            temp_den = 1 / (dist_list[m] ** power)
-            # sum numerator and denominator values
-            numerator = numerator + temp_num
-            denominator = denominator + temp_den
-        grid_z_val = numerator / denominator
-        grid_points.loc[i, 'geometry'] = Point(x_coord, y_coord, grid_z_val)
-        bar.update(i)
-    
-    return(grid_points)
 
 def assignSide(point_layer, line_layer):
     # create a list of all line coordinates to iterate over each segment
