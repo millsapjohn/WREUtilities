@@ -79,7 +79,7 @@ def main():
         for j in range((round((max_y - min_y) / grid_space)) - 1):
             x_coord = min_x + (i * grid_space)
             y_coord = min_y + (j * grid_space)
-            pt = Point(x_coord, y_coord, 0.00)
+            pt = shapely.Point(x_coord, y_coord, 0.00)
             grid_point_list.append({'geometry' : pt})
     grid_lyr = gpd.GeoDataFrame(grid_point_list, geometry='geometry', crs=bathy_lyr.crs)
 
@@ -94,7 +94,7 @@ def main():
     assignMDValues(grid_lyr, cl_lyr)
 
     # generate new bathy, grid layers with m, d coordinates
-    print('generating new bathy, grid layers')
+    print('\ngenerating new bathy, grid layers')
     md_bathy_lyr = mdPointLayer(bathy_lyr)
     bathy_index = md_bathy_lyr.sindex
     md_grid_lyr = mdPointLayer(grid_lyr)
@@ -103,17 +103,21 @@ def main():
     print('\n performing IDW interpolation on anisotropic coordinates')
     grid_lyr = invDistWeight(grid_lyr, md_bathy_lyr, md_grid_lyr, power, radius, min_points, max_points, bathy_index)
     print('\n exporting grid points to Shapefile')
+    # TODO check if grid layer already exists, overwrite
     grid_lyr.to_file("grid_points.shp")
     print('processing complete')
 
 # function to calculate the z value for grid points using inverse distance weighted method of m, d coordinates
 def invDistWeight(grid_lyr, bathy_md_lyr, grid_md_lyr, power, radius, min_points, max_points, sindex):
-    for index, row in grid_md_lyr:
+    bar = progressbar.ProgressBar(min_value=0).start()
+    for index, row in grid_md_lyr.iterrows():
+        x_coord = grid_lyr.iloc[index, 'geometry'].x
+        y_coord = grid_lyr.iloc[index, 'geometry'].y
         pt = row['geometry']
         # generate a polygon corresponding to the search radius specified
         buff = shapely.buffer(pt, radius, quad_segs=64)
         # rough estimate of possible matches based on spatial index
-        possible_matches_index = list(sindex.intersection(buff))
+        possible_matches_index = list(sindex.intersection(buff.bounds))
         possible_matches = bathy_md_lyr.iloc[possible_matches_index]
         # exact list of matches
         precise_matches = possible_matches[possible_matches.intersects(buff)]
@@ -123,16 +127,16 @@ def invDistWeight(grid_lyr, bathy_md_lyr, grid_md_lyr, power, radius, min_points
             while len(precise_matches) < min_points:
                 new_rad = radius + (i * 5)
                 buff = shapely.buffer(pt, new_rad, quad_segs=64)
-                possible_matches_index = list(sindex.intersection(buff))
+                possible_matches_index = list(sindex.intersection(buff.bounds))
                 possible_matches = bathy_md_lyr.iloc[possible_matches_index]
                 precise_matches = possible_matches[possible_matches.intersects(buff)]
                 i += 1
         # putting this here because I think this minimizes the number of duplicate operations...
         match_pts = gpd.GeoDataFrame(precise_matches)
         match_dist_dict = {}
-        for index, row2 in match_pts:
+        for index2, row2 in match_pts.iterrows():
             dist = row2['geometry'].distance(pt)
-            temp_dict = {dist : row2}
+            temp_dict = {dist : index2}
             match_dist_dict.update(temp_dict)
         # this has to come second in case expanding the search radius above grabs a ton of points
         if len(match_dist_dict) > max_points:
@@ -159,13 +163,15 @@ def invDistWeight(grid_lyr, bathy_md_lyr, grid_md_lyr, power, radius, min_points
             numerator = numerator + temp_num
             denominator = denominator + temp_den
         grid_z_val = numerator / denominator
-        grid_lyr.loc[i, 'geometry'] = Point(x_coord, y_coord, grid_z_val)
+        grid_lyr.loc[i, 'geometry'] = shapely.Point(x_coord, y_coord, grid_z_val)
+        bar.update(index)
 
     return(grid_lyr)
 
 # function to create new gdf from m, d values
 def mdPointLayer(gdf):
     point_list = []
+    bar = progressbar.ProgressBar(min_value=0).start()
     for index, row in gdf.iterrows():
         m_val = row['m_val']
         d_val = row['d_val']
@@ -175,6 +181,7 @@ def mdPointLayer(gdf):
             z_val = 0.00
         pt = shapely.Point(m_val, d_val, z_val)
         point_list.append({'geometry' : pt})
+        bar.update(index)
     new_layer = gpd.GeoDataFrame(point_list, geometry='geometry')
     return new_layer
 
@@ -222,17 +229,17 @@ def assignSide(point_layer, line_layer):
     line_coords = []
     for index, row in line_layer.iterrows():
         for pt in list(row['geometry'].coords):
-            line_coords.append(Point(pt))
+            line_coords.append(shapely.Point(pt))
     point_coords = []
     for index, row in point_layer.iterrows():
         for pt in list(row['geometry'].coords):
-            point_coords.append(Point(pt))
+            point_coords.append(shapely.Point(pt))
     bar = progressbar.ProgressBar(min_value=0).start()
     side_values = pd.Series(dtype='int64')
     for i in range(len(point_coords) - 1):
         for j in range(len(line_coords) - 2):
             # creating a line segment out of only two points
-            temp_line = LineString([line_coords[j], line_coords[j + 1]])
+            temp_line = shapely.LineString([line_coords[j], line_coords[j + 1]])
             temp_area = signedTriangleArea(temp_line, point_coords[i])
             # set the initial area value on the first segment
             if i == 0:
@@ -256,9 +263,9 @@ def signedTriangleArea(test_line, test_point):
     # the "signed triangle area" formula returns an area value that is < 0 when the test point is on the
     # right side of the line, > 0 when on the left. This determines the "sidedness" of each point.
     # smaller absolute value = closer to the line. 
-    vertex_1 = Point(test_line.coords[0])
-    vertex_2 = Point(test_line.coords[1])
-    test_point = Point(test_point)
+    vertex_1 = shapely.Point(test_line.coords[0])
+    vertex_2 = shapely.Point(test_line.coords[1])
+    test_point = shapely.Point(test_point)
     area = ((vertex_2.x - vertex_1.x) - (test_point.y - vertex_2.y)) - ((test_point.x - vertex_2.x) * (vertex_2.y - vertex_1.y))
 
     return area
@@ -266,10 +273,10 @@ def signedTriangleArea(test_line, test_point):
 def assignMDValues(point_layer, cl_layer):
     m_values = pd.Series(dtype='float64')
     d_values = pd.Series(dtype='float64')
-    cl_string = LineString(cl_layer.at[0, 'geometry'])
+    cl_string = shapely.LineString(cl_layer.at[0, 'geometry'])
     bar = progressbar.ProgressBar(min_value=0).start()
     for i in range(len(point_layer) - 1):
-        p = Point(point_layer.at[i, 'geometry'])
+        p = shapely.Point(point_layer.at[i, 'geometry'])
         m_val = cl_string.project(p)
         proj_point = cl_string.interpolate(m_val)
         d_val = p.distance(proj_point)
