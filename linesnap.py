@@ -45,6 +45,7 @@ def main():
     
     print('\ncreating new segments')
     seg_list = []
+    used_list = []
     bar = progressbar.ProgressBar(min_value=0).start()
     for index, row in point_layer.iterrows():
         pt = point_layer.at[index, 'geometry']
@@ -57,9 +58,6 @@ def main():
             possible_matches_index = list(point_index.intersection(buff.bounds))
             possible_matches = point_layer.iloc[possible_matches_index]
             precise_matches = possible_matches[possible_matches.intersects(buff)]
-            if seg_list != []: 
-                prev_seg = seg_list[-1]
-                prev_points = [shapely.Point(prev_seg['geometry'].coords[0]), shapely.Point(prev_seg['geometry'].coords[1])]
             if len(precise_matches) == 1: 
                 continue
             else: 
@@ -75,12 +73,12 @@ def main():
                     update_pt = shapely.Point(point_layer.at[list(match_dist_dict.values())[1], 'geometry'])
                 except IndexError: 
                     continue
-                if seg_list != []:
-                    if update_pt in prev_points: 
-                        continue
+                if list(match_dist_dict.values())[1] in used_list: 
+                    continue
                 new_seg = shapely.LineString([shapely.force_2d(pt), shapely.force_2d(update_pt)])
                 # update points to reflect added segment (exclude from future searches)
                 seg_list.append({'geometry' : new_seg})
+                used_list.extend([index, list(match_dist_dict.values())[1]])
         bar.update(index)
         
     print('\nconverting segments to multipart')
