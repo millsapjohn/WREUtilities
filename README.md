@@ -22,6 +22,11 @@ Merges all .asc files in a directory.
 ## jxlparse.py 
 Converts a Trimble .jxl (JobXML) file to .csv of points, listing pertinent info such as precision.
 
+## linesnap.py 
+Takes a collection of disconnected line segments and joins them. No vertices are moved; rather a new segment is 
+added between endpoints. Searches by location rather than index, and dynamically updates as it goes. This should 
+make joining less error-prone than methods currently available in GRASS, QGIS, etc.
+
 ## massmover.py
 Moves all files in a directory to a new directory. Doesn't work right now because I haven't done anything with
 it.
