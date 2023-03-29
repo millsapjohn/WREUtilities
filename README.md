@@ -2,8 +2,7 @@
 
 This is a collection of Python scripts I've created to automate some parts of my job as a Water Resource Engineer.
 
-As of this commit (12/1/2022), all of these utilities operate on all matching files in a particular directory.
-All utilities other than xmrg_extract.py do not take any arguments.
+Most utilities do not take arguments; those that do are explained below.
 
 ## convertmm.py
 Simple script to convert .asc files from mm (millimeters) to in (inches).
@@ -22,10 +21,14 @@ Merges all .asc files in a directory.
 ## jxlparse.py 
 Converts a Trimble .jxl (JobXML) file to .csv of points, listing pertinent info such as precision.
 
+Arguments: <source file> <destination file>
+
 ## linesnap.py 
 Takes a collection of disconnected line segments and joins them. No vertices are moved; rather a new segment is 
 added between endpoints. Searches by location rather than index, and dynamically updates as it goes. This should 
 make joining less error-prone than methods currently available in GRASS, QGIS, etc.
+
+Arguments: <source file> <destination file> <search radius>
 
 ## massmover.py
 Moves all files in a directory to a new directory. Doesn't work right now because I haven't done anything with
