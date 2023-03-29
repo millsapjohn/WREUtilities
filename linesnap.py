@@ -54,7 +54,7 @@ def main():
         else: 
             # search for vertices within the specified radius
             buff = shapely.buffer(pt, radius)
-            possible_matches_index = list(sindex.intersection(buff.bounds))
+            possible_matches_index = list(point_index.intersection(buff.bounds))
             possible_matches = point_layer.iloc[possible_matches_index]
             precise_matches = possible_matches[possible_matches.intersects(buff)]
             if len(precise_matches) == 0: 
@@ -71,11 +71,11 @@ def main():
                 # sort match dict by distance to pt
                 match_dist_dict = OrderedDict(sorted(match_dist_dict.items(), key=lambda t: t[0]))
                 # grab nearest point, create new segment
-                update_pt = shapely.Point(point_layer.at[match_dist_dict.values()[0]])
-                new_seg = shapely.LineString(shapely.force_2d(pt), shapely.force_2d(update_pt))
+                update_pt = shapely.Point(point_layer.at[list(match_dist_dict.values())[0], 'geometry'])
+                new_seg = shapely.LineString([shapely.force_2d(pt), shapely.force_2d(update_pt)])
                 # update points to reflect added segment (exclude from future searches)
-                pt.z = 1
-                update_pt.z = 1
+                pt = shapely.Point([pt.x, pt.y, 1])
+                update_pt = shapely.Point([update_pt.x, update_pt.y, 1])
                 point_layer.at[index, 'geometry'] = pt
                 point_layer.at[index2, 'geometry'] = update_pt
                 seg_lyr.append({'geometry' : new_seg}, ignore_index=True)
