@@ -26,30 +26,30 @@ def main():
     # are unaffected. This creates a gdf of all single line segments.
     print('\nconverting geometry to singlepart')
     seg_lyr = source_lyr.explode(ignore_index=True)
-    # list of all coordinates from all line segments - to be populated later.
-    coords = []
     # extract all vertices from lines. Vertices that have one line segment
     # attached get a "z" value of 0, vertices with two attached get 1. This
     # will be used to filter points when snapping later on.
+    end_points = []
     print('\nextracting points')
     for index, row in source_lyr.iterrows():
         row_coords = shapely.get_coordinates(row['geometry']).tolist()
-        for i in range(len(row_coords) - 1): 
-            if i == 0: 
-                pt = shapely.Point(row_coords[i][0], row_coords[i][1], 0)
-            elif i == len(row_coords) - 1: 
-                pt = shapely.Point(row_coords[i][0], row_coords[i][1], 0)
-            else: 
-                pt = shapely.Point(row_coords[i][0], row_coords[i][1], 1)
-            coords.append({'geometry' : pt})
-    point_layer = gpd.GeoDataFrame(coords, geometry='geometry')
+        pt = shapely.Point(row_coords[0])
+        end_points.append({'geometry' : pt})
+        pt = shapely.Point(row_coords[-1])
+        end_points.append({'geometry' : pt})
+    point_layer = gpd.GeoDataFrame(end_points, geometry='geometry', crs=source_lyr.crs)
     point_index = point_layer.sindex
     
+    minx, miny, maxx, maxy = point_layer.geometry.total_bounds
+    bounds = shapely.Polygon([(minx, miny), (minx, maxy), (maxx, maxy), (maxx, miny)])
+    
     print('\ncreating new segments')
+    seg_list = []
     bar = progressbar.ProgressBar(min_value=0).start()
     for index, row in point_layer.iterrows():
         pt = point_layer.at[index, 'geometry']
-        if pt.z == 1: 
+        bounds_check = shapely.buffer(pt, 1)
+        if shapely.contains(bounds, bounds_check) == False:
             continue
         else: 
             # search for vertices within the specified radius
@@ -57,34 +57,37 @@ def main():
             possible_matches_index = list(point_index.intersection(buff.bounds))
             possible_matches = point_layer.iloc[possible_matches_index]
             precise_matches = possible_matches[possible_matches.intersects(buff)]
-            if len(precise_matches) == 0: 
+            if seg_list != []: 
+                prev_seg = seg_list[-1]
+                prev_points = [shapely.Point(prev_seg['geometry'].coords[0]), shapely.Point(prev_seg['geometry'].coords[1])]
+            if len(precise_matches) == 1: 
                 continue
             else: 
                 # create dictionary of matches filtered by number of connected segments
                 match_dist_dict = {}
                 for index2, row2 in precise_matches.iterrows(): 
                     temp_pt = precise_matches.at[index2, 'geometry']
-                    if temp_pt.z == 1: 
-                        continue
-                    else: 
-                        match_dist_dict.update({row2['geometry'].distance(pt) : index2})
+                    match_dist_dict.update({row2['geometry'].distance(pt) : index2})
                 # sort match dict by distance to pt
                 match_dist_dict = OrderedDict(sorted(match_dist_dict.items(), key=lambda t: t[0]))
-                # grab nearest point, create new segment
-                update_pt = shapely.Point(point_layer.at[list(match_dist_dict.values())[0], 'geometry'])
+                # grab nearest point (index 0 is the point itself), create new segment
+                try: 
+                    update_pt = shapely.Point(point_layer.at[list(match_dist_dict.values())[1], 'geometry'])
+                except IndexError: 
+                    continue
+                if seg_list != []:
+                    if update_pt in prev_points: 
+                        continue
                 new_seg = shapely.LineString([shapely.force_2d(pt), shapely.force_2d(update_pt)])
                 # update points to reflect added segment (exclude from future searches)
-                pt = shapely.Point([pt.x, pt.y, 1])
-                update_pt = shapely.Point([update_pt.x, update_pt.y, 1])
-                point_layer.at[index, 'geometry'] = pt
-                point_layer.at[index2, 'geometry'] = update_pt
-                seg_lyr.append({'geometry' : new_seg}, ignore_index=True)
+                seg_list.append({'geometry' : new_seg})
         bar.update(index)
         
     print('\nconverting segments to multipart')
-    seg_lyr.dissolve()
+    new_lyr = gpd.GeoDataFrame(seg_list, geometry='geometry', crs=source_lyr.crs)
+    # seg_lyr.dissolve()
     print('\nprocessing complete')
-    seg_lyr.to_file(destination)
+    new_lyr.to_file(destination)
     
 def featureTypeCheck(layer): 
     for index, row in gdf.iterrows(): 
