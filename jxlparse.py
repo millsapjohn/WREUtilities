@@ -2,7 +2,6 @@ import sys
 import xml.etree.ElementTree as ET
 import os
 import csv
-import argparse
 from io import StringIO
 
 def main(): 
