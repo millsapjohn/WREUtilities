@@ -26,11 +26,9 @@ def main():
     # are unaffected. This creates a gdf of all single line segments.
     print('\nconverting geometry to singlepart')
     seg_lyr = source_lyr.explode(ignore_index=True)
-    # extract all vertices from lines. Vertices that have one line segment
-    # attached get a "z" value of 0, vertices with two attached get 1. This
-    # will be used to filter points when snapping later on.
     end_points = []
     print('\nextracting points')
+    # extract only beginning and ending vertices from all multilinestrings
     for index, row in source_lyr.iterrows():
         row_coords = shapely.get_coordinates(row['geometry']).tolist()
         pt = shapely.Point(row_coords[0])
@@ -40,6 +38,7 @@ def main():
     point_layer = gpd.GeoDataFrame(end_points, geometry='geometry', crs=source_lyr.crs)
     point_index = point_layer.sindex
     
+    # create bounding box to check for beginning/ending points of the overall layer
     minx, miny, maxx, maxy = point_layer.geometry.total_bounds
     bounds = shapely.Polygon([(minx, miny), (minx, maxy), (maxx, maxy), (maxx, miny)])
     
@@ -49,9 +48,11 @@ def main():
     bar = progressbar.ProgressBar(min_value=0).start()
     for index, row in point_layer.iterrows():
         pt = point_layer.at[index, 'geometry']
+        # check that the point isn't at the bounds of the layer
         bounds_check = shapely.buffer(pt, 1)
         if shapely.contains(bounds, bounds_check) == False:
             continue
+        # check that the vertex hasn't already has a new line segment attached to it
         elif index in used_list:
             continue
         else: 
@@ -63,15 +64,18 @@ def main():
             if len(precise_matches) == 1: 
                 continue
             else: 
-                # create dictionary of matches filtered by number of connected segments
+                # create dictionary of unused vertices within search radius
                 match_dist_dict = {}
                 for index2, row2 in precise_matches.iterrows(): 
+                    # create dictionary entry of point number and distance to current point
                     temp_pt = precise_matches.at[index2, 'geometry']
                     match_dist_dict.update({row2['geometry'].distance(pt) : index2})
                 # sort match dict by distance to pt
                 match_dist_dict = OrderedDict(sorted(match_dist_dict.items(), key=lambda t: t[0]))
+                # create list of point numbers only, from nearest to furthest
                 match_list = list(match_dist_dict.values())
                 for i in range(len(match_list) - 1): 
+                    # search will return the current point - discard
                     if i == 0: 
                         continue
                     elif match_list[i] not in used_list: 
@@ -85,19 +89,10 @@ def main():
                         continue
         bar.update(index)
         
-    # print('\nconverting segments to multipart')
     new_lyr = gpd.GeoDataFrame(seg_list, geometry='geometry', crs=source_lyr.crs)
-    # seg_lyr.dissolve()
     print('\nprocessing complete')
     new_lyr.to_file(destination)
     
-def featureTypeCheck(layer): 
-    for index, row in gdf.iterrows(): 
-        if row['geometry'].geom_type != 'LineString': 
-            sys.exit('Geometry is not linestrings')
-        else: 
-            pass
-            
 def fileCheck(file):
     ext = os.path.splitext(file)[1][1:]
     if ext != 'shp': 
