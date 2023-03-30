@@ -52,6 +52,8 @@ def main():
         bounds_check = shapely.buffer(pt, 1)
         if shapely.contains(bounds, bounds_check) == False:
             continue
+        elif index in used_list:
+            continue
         else: 
             # search for vertices within the specified radius
             buff = shapely.buffer(pt, radius)
@@ -68,20 +70,22 @@ def main():
                     match_dist_dict.update({row2['geometry'].distance(pt) : index2})
                 # sort match dict by distance to pt
                 match_dist_dict = OrderedDict(sorted(match_dist_dict.items(), key=lambda t: t[0]))
-                # grab nearest point (index 0 is the point itself), create new segment
-                try: 
-                    update_pt = shapely.Point(point_layer.at[list(match_dist_dict.values())[1], 'geometry'])
-                except IndexError: 
-                    continue
-                if list(match_dist_dict.values())[1] in used_list: 
-                    continue
-                new_seg = shapely.LineString([shapely.force_2d(pt), shapely.force_2d(update_pt)])
-                # update points to reflect added segment (exclude from future searches)
-                seg_list.append({'geometry' : new_seg})
-                used_list.extend([index, list(match_dist_dict.values())[1]])
+                match_list = list(match_dist_dict.values())
+                for i in range(len(match_list) - 1): 
+                    if i == 0: 
+                        continue
+                    elif match_list[i] not in used_list: 
+                        update_pt = point_layer.at[match_list[i], 'geometry']
+                        new_seg = shapely.LineString([pt, update_pt])
+                        seg_list.append({'geometry' : new_seg})
+                        used_list.append(index)
+                        used_list.append(match_list[i])
+                        break
+                    else:
+                        continue
         bar.update(index)
         
-    print('\nconverting segments to multipart')
+    # print('\nconverting segments to multipart')
     new_lyr = gpd.GeoDataFrame(seg_list, geometry='geometry', crs=source_lyr.crs)
     # seg_lyr.dissolve()
     print('\nprocessing complete')
